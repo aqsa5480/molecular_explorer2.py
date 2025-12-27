@@ -1,0 +1,16 @@
+{
+  "python.analysis.autoSearchPaths": true,
+  "python.analysis.extraPaths": ["./"],
+  "python.analysis.diagnosticMode": "workspace",
+  "python.analysis.typeCheckingMode": "off",
+  "python.linting.enabled": true,
+  "python.linting.pylintEnabled": false,
+  // point to your conda interpreter
+  "python.defaultInterpreterPath": "C:\\Users\\HomePC\\miniconda3\\envs\\molexplorer\\python.exe",
+
+  // disable Pylance warnings about missing imports
+  "python.analysis.diagnosticSeverityOverrides": {
+    "reportMissingImports": "none",
+    "reportMissingModuleSource": "none"
+  }
+}
