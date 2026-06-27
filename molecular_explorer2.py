@@ -37,18 +37,6 @@ import requests
 # Local modules
 sys.path.append(".")
 import sascorer
-# --------------------------------
-# ASE (optional – cloud safe)
-# --------------------------------
-ASE_ENABLED = False
-
-try:
-    from ase import Atoms
-    from ase.calculators.emt import EMT
-    from ase.optimize import BFGS
-    ASE_ENABLED = True
-except Exception:
-    ASE_ENABLED = False
 
 # Load secret API key
 api_key = st.secrets["OPENROUTER_API_KEY"]
@@ -58,158 +46,56 @@ if 'feedback_data' not in st.session_state:
     st.session_state.feedback_data = []
 
 
-# --------------------------------
 # Application configuration
-# --------------------------------
 st.set_page_config(
     page_title="Molecular Explorer Pro | by Aqsa Ijaz",
     layout="wide",
     page_icon="🧪",
     initial_sidebar_state="expanded"
 )
+# 🎉 Play welcome voice only once
+# Initialize voice engine once
+engine = pyttsx3.init()
 
-import random
+def speak(text):
+    try:
+        if not engine._inLoop:
+            engine.say(text)
+            engine.runAndWait()
+    except RuntimeError:
+        pass  # Prevent crash if another thread is already speaking
+if 'has_welcomed' not in st.session_state:
+    st.session_state.has_welcomed = True
+    speak("Welcome! We'll explore chemistry together!")
 
-# --------------------------------
-# Voice assistant (safe for cloud)
-# --------------------------------
-VOICE_ENABLED = False
 
-try:
-    import speech_recognition as sr
-    import pyttsx3
-    from helper import speak_text
-    VOICE_ENABLED = True
-except Exception:
-    VOICE_ENABLED = False
-
-# Sidebar toggle (local-only voice)
-st.sidebar.markdown("### 🎙️ Voice Assistant")
-voice_toggle = st.sidebar.checkbox("Enable voice (local only)", value=False)
-
-if voice_toggle and VOICE_ENABLED:
-    st.session_state["voice_allowed"] = True
-else:
-    st.session_state["voice_allowed"] = False
-
-# --------------------------------
-# Greeting logic
-# --------------------------------
-GREETING_MESSAGES = [
-    "Heyy! You're back! Let's GOOOO!",
-    "Whoa! Molecules await—let’s unravel their secrets!",
-    "Hello scientist! You bring the curiosity, I’ll bring the chemistry!",
-    "Let’s make atoms dance! Time to decode some structures!",
-    "Welcome back! I’ve got a flask full of surprises today!"
-]
-
-def play_greeting():
-    if not VOICE_ENABLED:
-        return
-    if not st.session_state.get("voice_allowed", False):
-        return
-    greeting = random.choice(GREETING_MESSAGES)
-    speak_text(greeting, voice_type="male", rate="+45%")
-
-# --------------------------------
-# Play greeting only once per session
-# --------------------------------
-if "greeted" not in st.session_state:
-    st.session_state.greeted = False
-
-if not st.session_state.greeted:
-    play_greeting()
-    st.session_state.greeted = True
-
-# --- Imports ---
-from typing import Optional, List
-import streamlit as st
-from rdkit import Chem
-import pubchempy as pcp
-from pymatgen.core.composition import Composition
-
-# --- SMILES dictionary ---
-smiles_map = {
-    "H2O": "O", "H2": "[H][H]", "O2": "O=O", "N2": "N#N", "CO2": "O=C=O",
-    "NH3": "N", "CH4": "C", "C2H6": "CC", "C3H8": "CCC", "C4H10": "CCCC",
-    "C2H4": "C=C", "C2H2": "C#C",
-    "CH3OH": "CO", "C2H5OH": "CCO", "CH3COOH": "CC(=O)O", "HCOOH": "O=CO",
-    "HCl": "Cl", "HNO3": "O[N+](=O)[O-]", "H2SO4": "O=S(=O)(O)O", "H3PO4": "OP(=O)(O)O",
-    "NaOH": "[Na+].[OH-]", "KOH": "[K+].[OH-]", "NH4OH": "[NH4+].[OH-]",
-    "NaCl": "[Na+].[Cl-]", "KCl": "[K+].[Cl-]", "CaCl2": "[Ca+2].[Cl-].[Cl-]",
-    "C6H12O6": "OC[C@H](O)[C@@H](O)[C@H](O)[C@H](O)CO",
-    "C12H22O11": "OC[C@H]1O[C@@H](O[C@H]2[C@@H](O)[C@H](O)[C@H](O)[C@H]2O)[C@H](O)[C@H](O)[C@H]1O",
-    "C8H9NO2": "CC(=O)NC1=CC=C(C=C1)O", "C13H18O2": "CC(C)CC1=CC=C(C=C1)C(C)C(=O)O",
-    "C9H8O4": "CC(=O)OC1=CC=CC=C1C(=O)O", "C8H10N4O2": "CN1C=NC2=C1C(=O)N(C(=O)N2C)C",
-    "C10H16N5O13P3": "Nc1ncnc2c1ncn2[C@H]3O[C@@H](COP(=O)(O)OP(=O)(O)OP(=O)(O)O)[C@@H](O)[C@H]3O",
-    "Cl2": "ClCl", "F2": "FF", "Br2": "BrBr", "I2": "I[I]",
-}
-# --- Manual names mapping ---
-manual_names = {
-    "H2O": "Water (H2O)", "H2": "Hydrogen (H2)", "O2": "Oxygen (O2)", "N2": "Nitrogen (N2)",
-    "CO2": "Carbon Dioxide (CO2)", "NH3": "Ammonia (NH3)", "CH4": "Methane (CH4)",
-    "C2H6": "Ethane (C2H6)", "C3H8": "Propane (C3H8)", "C4H10": "Butane (C4H10)",
-    "C2H4": "Ethylene (C2H4)", "C2H2": "Acetylene (C2H2)",
-    "CH3OH": "Methanol (CH3OH)", "C2H5OH": "Ethanol (C2H5OH)",
-    "CH3COOH": "Acetic Acid (CH3COOH)", "HCOOH": "Formic Acid (HCOOH)",
-    "HCl": "Hydrochloric Acid (HCl)", "HNO3": "Nitric Acid (HNO3)",
-    "H2SO4": "Sulfuric Acid (H2SO4)", "H3PO4": "Phosphoric Acid (H3PO4)",
-    "NaOH": "Sodium Hydroxide (NaOH)", "KOH": "Potassium Hydroxide (KOH)",
-    "NH4OH": "Ammonium Hydroxide (NH4OH)",
-    "NaCl": "Sodium Chloride (NaCl)", "KCl": "Potassium Chloride (KCl)",
-    "CaCl2": "Calcium Chloride (CaCl2)",
+# Unique chemical database
+CHEMICAL_DATABASE = {
+    "Methane (CH4)": "CH4", "Ethane (C2H6)": "C2H6", 
+    "Propane (C3H8)": "C3H8", "Butane (C4H10)": "C4H10",
+    "Methanol (CH3OH)": "CH3OH", "Ethanol (C2H5OH)": "C2H5OH",
+    "Formic Acid (HCOOH)": "HCOOH", "Acetic Acid (CH3COOH)": "CH3COOH",
+    "Water (H2O)": "H2O", "Ammonia (NH3)": "NH3", 
+    "Carbon Dioxide (CO2)": "CO2", "Hydrogen (H2)": "H2",
+    "Sodium Hydroxide (NaOH)": "NaOH", "Potassium Hydroxide (KOH)": "KOH",
+    "Chlorine (Cl2)": "Cl2", "Fluorine (F2)": "F2",
+    "Polyethylene ((C2H4)n)": "(C2H4)n", "Polystyrene ((C8H8)n)": "(C8H8)n",
+    "Caffeine (C8H10N4O2)": "C8H10N4O2", "ATP (C10H16N5O13P3)": "C10H16N5O13P3",
+    "Buckminsterfullerene (C60)": "C60", "Carbon Nanotube (C)": "C",
+    "Glucose (C6H12O6)": "C6H12O6", "Aspirin (C9H8O4)": "C9H8O4",
+    "Sodium Chloride (NaCl)": "NaCl", "Sulfuric Acid (H2SO4)": "H2SO4",
+    "Hydrochloric Acid (HCl)": "HCl", "Nitric Acid (HNO3)": "HNO3",
+    "Phosphoric Acid (H3PO4)": "H3PO4", "Urea (CH4N2O)": "CH4N2O",
+    "Paracetamol (C8H9NO2)": "C8H9NO2", "Ibuprofen (C13H18O2)": "C13H18O2"
 }
 
-# --- CHEMICAL_DATABASE ---
-CHEMICAL_DATABASE = {}
-for compound, smiles in smiles_map.items():
-    name = manual_names.get(compound, compound)
-    CHEMICAL_DATABASE[name] = compound
-# --- PubChem fetch function ---
 def get_pubchem_compounds(formula: str) -> List[pcp.Compound]:
+    """Fetch compounds from PubChem with improved error handling"""
     try:
         return pcp.get_compounds(formula, 'formula')
     except Exception as e:
         st.warning(f"PubChem server error: {str(e)}")
         return []
-
-# --- Main formula_to_smiles function ---
-@st.cache_data(show_spinner=False)
-def formula_to_smiles(query: str) -> Optional[str]:
-    query = query.strip()
-    
-    # 1️⃣ Check local SMILES map
-    if query in smiles_map:
-        return smiles_map[query]
-    
-    # 2️⃣ PubChem fallback
-    try:
-        compounds = pcp.get_compounds(query, 'name')
-        if compounds:
-            return compounds[0].canonical_smiles
-        compounds = pcp.get_compounds(query, 'formula')
-        if compounds:
-            return compounds[0].canonical_smiles
-    except Exception as e:
-        st.warning(f"PubChem fetch failed: {e}")
-        return None
-    
-    return None
-
-# --- Formula safe function for pymatgen ---
-def name_to_formula_safe(name_or_formula: str) -> str:
-    """Convert chemical name to formula if known, else return as-is."""
-    return smiles_map.get(name_or_formula, name_or_formula)
-
-# --- Usage in calculation ---
-def calculate_properties(user_input: str):
-    formula = name_to_formula_safe(user_input)
-    comp = Composition(formula)  # now safe
-    return {
-        "formula": str(comp),
-        "mass": comp.weight,
-        "elements": list(comp.get_el_amt_dict().keys())
-    }
 
 def prepare_molecule(smiles: str, embed_seed: int = 42) -> Optional[Chem.Mol]:
     """Return a molecule with Hs and valid conformer (3D or 2D)."""
@@ -327,16 +213,17 @@ def evaluate_lipinski(mol):
     passed = all(rules.values())
     rules["passed"] = passed
     return rules
-
-
 def estimate_bioavailability(mol):
-    """Simple heuristic: start at 1.0 and subtract penalties."""
-    hbd       = Descriptors.NumHDonors(mol)
-    hba       = Descriptors.NumHAcceptors(mol)
+    """Estimate oral bioavailability score based on simple heuristics."""
+    hbd = Descriptors.NumHDonors(mol)
+    hba = Descriptors.NumHAcceptors(mol)
     rot_bonds = Descriptors.NumRotatableBonds(mol)
-    tpsa      = Descriptors.TPSA(mol)
-    logp      = Descriptors.MolLogP(mol)
+    tpsa = Descriptors.TPSA(mol)
+    logp = Descriptors.MolLogP(mol)
+
+    # Heuristic scoring (simple approximation)
     score = 1.0
+
     if hbd > 5 or hba > 10:
         score -= 0.3
     if tpsa > 140:
@@ -345,12 +232,12 @@ def estimate_bioavailability(mol):
         score -= 0.2
     if logp < -1 or logp > 5:
         score -= 0.2
-    return max(score, 0.0)
 
+    return max(score, 0.0)
 def calculate_sascore(mol):
-    """Wrapper around your sascorer.calculateScore call."""
-    from sascorer import calculateScore
-    return round(calculateScore(mol), 2)
+    from sascorer import calculateScore  # make sure `sascorer.py` is in same folder or added to path
+    score = calculateScore(mol)
+    return round(score, 2)
 
 def get_render_style(style: str, colorscheme: str):
     """
@@ -372,6 +259,25 @@ def get_render_style(style: str, colorscheme: str):
     else:
         return {"stick": {"colorscheme": colorscheme}}
 
+@st.cache_data(show_spinner=False)
+def formula_to_smiles(query: str) -> Optional[str]:
+    """Convert chemical formula or name to SMILES. Uses dictionary and PubChem fallback."""
+    smiles_map = {
+        "H2O": "O", "CH4": "C", "CH3COOH": "CC(=O)O", "C2H5OH": "CCO",
+        "CO2": "O=C=O", "NH3": "N", "NaOH": "[Na+].[OH-]", "KOH": "[K+].[OH-]",
+        "HNO3": "O[N+](=O)[O-]", "HCl": "Cl", "H2SO4": "O=S(=O)(O)O", "H3PO4": "OP(=O)(O)O",
+        "NaCl": "[Na+].[Cl-]", "CH4N2O": "NC(=O)N",  # Urea
+        "C6H12O6": "OC[C@H](O)[C@@H](O)[C@H](O)[C@H](O)CO",  # Glucose
+        "C8H9NO2": "CC(=O)NC1=CC=C(C=C1)O",  # Paracetamol
+        "C13H18O2": "CC(C)CC1=CC=C(C=C1)C(C)C(=O)O",  # Ibuprofen
+        "C9H8O4": "CC(=O)OC1=CC=CC=C1C(=O)O",  # Aspirin
+        "C8H10N4O2": "CN1C=NC2=C1C(=O)N(C(=O)N2C)C",  # Caffeine
+        "C10H16N5O13P3": "Nc1ncnc2c1ncn2[C@H]3O[C@@H](COP(=O)(O)OP(=O)(O)OP(=O)(O)O)[C@@H](O)[C@H]3O",  # ATP
+        "C60": "C1=CC2=CC3=CC4=CC5=CC6=CC7=CC8=CC9=CC1=C2C3=C4C5=C6C7=C8C9",  # Fullerene (approx.)
+        "C2H4": "C=C", "C8H8": "C1=CC=C(C=C1)C=C", "CH3OH": "CO", "C2H6": "CC",
+        "C3H8": "CCC", "C4H10": "CCCC", "HCOOH": "O=CO", "NH4OH": "[NH4+].[OH-]",
+        "O2": "O=O", "N2": "N#N", "Cl2": "ClCl", "F2": "FF"
+    }
 
     query = query.strip()
 
@@ -585,118 +491,112 @@ def optimize_positions_cached(pos_tuple: tuple, symbols: tuple, fmax: float = 0.
 # Main view
 # ----------------------
 def quantum_calculations_view(formula: str) -> None:
-    """Run safe geometry optimization with before/after comparison and metrics."""
+    """Run quantum-style geometry optimization with a safe UI (button + caching)."""
 
-    # --- Convert formula to SMILES ---
+    # --- Parse & validate SMILES / molecule first (no heavy work yet) ---
     smiles = formula_to_smiles(formula)
     if not smiles:
         st.warning("SMILES conversion required for quantum analysis")
         return
 
-    # --- Prepare molecule ---
     mol = prepare_molecule(smiles)
     if not mol:
         st.warning("Invalid molecule structure")
         return
 
     if mol.GetNumConformers() == 0:
-        st.warning("No 3D conformer available for calculation")
+        st.warning("No 3D conformer available for quantum calculation")
         return
 
-    # --- Original data ---
+    # --- Basic extracted data (lightweight) ---
     original_coords = np.array(mol.GetConformer().GetPositions(), dtype=float)
     symbols = tuple(atom.GetSymbol() for atom in mol.GetAtoms())
+    pos_tuple = tuple(map(tuple, original_coords.tolist()))  # hashable key for caching
     initial_xyz = Chem.MolToXYZBlock(mol)
 
-    # --- Run button ---
-    run_now = st.sidebar.button("▶️ Run Geometry Optimization")
+    # Place Run button in sidebar or main UI - only runs when clicked
+    col_run = st.sidebar if st.sidebar else st
+    run_now = col_run.button("▶️ Run Quantum Optimization")
+
+    # If we've run before for this molecule, load from session_state to show results quickly
     result_key = "quantum_result_" + hashlib.sha256(initial_xyz.encode()).hexdigest()
     prev = st.session_state.get(result_key, None)
 
     if run_now or prev is None:
-        with st.spinner("Optimizing geometry..."):
+        # If button pressed OR not cached in session_state - call optimizer (cached by content)
+        with st.spinner("Running quantum calculations (this may take a little)..."):
             try:
-                # --- RDKit optimization ---
-                mol_copy = Chem.Mol(mol)
-                try:
-                    mmff_props = AllChem.MMFFGetMoleculeProperties(mol_copy)
-                    if mmff_props:
-                        ff = AllChem.MMFFGetMoleculeForceField(mol_copy, mmff_props)
-                        ff.Minimize()
-                        energy_ev = ff.CalcEnergy()
-                        energy_kj = energy_ev * 96.485  # eV → kJ/mol
-                    else:
-                        AllChem.UFFOptimizeMolecule(mol_copy)
-                        energy_ev = None
-                        energy_kj = None
-                except:
-                    AllChem.UFFOptimizeMolecule(mol_copy)
-                    energy_ev = None
-                    energy_kj = None
+                # Use cached optimizer keyed by positions & symbols
+                new_positions, forces, energy_ev = optimize_positions_cached(pos_tuple, symbols, fmax=0.05, steps=200)
 
-                # --- Optimized positions ---
-                optimized_coords = np.array(mol_copy.GetConformer().GetPositions(), dtype=float)
-                optimized_xyz = Chem.MolToXYZBlock(mol_copy)
+                # Build optimized RDKit molecule copy and update coordinates
+                optimized_mol = Chem.Mol(mol)
+                conf = optimized_mol.GetConformer()
+                for i, p in enumerate(new_positions):
+                    conf.SetAtomPosition(i, tuple(p))
+
+                optimized_xyz = Chem.MolToXYZBlock(optimized_mol)
 
                 # RMSD
-                rmsd = np.sqrt(np.mean(np.sum((original_coords - optimized_coords) ** 2, axis=1)))
+                rmsd = np.sqrt(np.mean(np.sum((original_coords - new_positions) ** 2, axis=1)))
 
-                # Forces (approximate)
-                force_magnitudes = np.linalg.norm(original_coords - optimized_coords, axis=1)
+                # Force magnitudes
+                force_magnitudes = np.linalg.norm(forces, axis=1)
 
-                # Store results
+                # Energy conversion
+                try:
+                    energy_kj = energy_ev * 96.485
+                except Exception:
+                    energy_kj = float("nan")
+
+                # Store in session_state so UI doesn't need to recompute on small widget changes
                 st.session_state[result_key] = {
                     "initial_xyz": initial_xyz,
                     "optimized_xyz": optimized_xyz,
-                    "new_positions": optimized_coords,
+                    "new_positions": new_positions,
                     "force_magnitudes": force_magnitudes,
                     "energy_ev": energy_ev,
                     "energy_kj": energy_kj,
                     "rmsd": rmsd,
-                    "optimized_mol": mol_copy,
+                    "optimized_mol": optimized_mol,
                 }
                 prev = st.session_state[result_key]
 
             except Exception as e:
-                st.error(f"Optimization failed: {e}")
+                st.error(f"Quantum calculation failed: {e}")
+                st.info("Tip: Try with a simpler molecule or reduce the number of atoms.")
                 return
 
-    # --- Display metrics ---
+    # If we get here, `prev` contains the results (either from this run or previously cached)
     if prev:
+        # --- Metrics row ---
         col1, col2, col3 = st.columns(3)
         with col1:
-            ev, kj = prev["energy_ev"], prev["energy_kj"]
-            if ev is not None and kj is not None:
-                st.metric("Optimized Energy", f"{ev:.4f} eV\n({kj:.2f} kJ/mol)")
-            else:
-                st.metric("Optimized Energy", "Not available (force-field only)")
-
+            ev = prev["energy_ev"]
+            kj = prev["energy_kj"]
+            st.metric("Optimized Energy", f"{ev:.4f} eV\n({kj:.2f} kJ/mol)")
         with col2:
             st.metric("Number of Atoms", f"{len(symbols)}")
-
         with col3:
             st.metric("Geometry RMSD", f"{prev['rmsd']:.4f} Å")
 
-        # --- Forces plot ---
+        # --- Forces plot (magnitudes) ---
         fig = px.bar(
             x=list(symbols),
             y=prev["force_magnitudes"],
-            labels={"x": "Atoms", "y": "Force Magnitude (Å)"},
-            title="Atomic Force Distribution (approx.)"
+            labels={"x": "Atoms", "y": "Force Magnitude (eV/Å)"},
+            title="Atomic Force Distribution (magnitudes)"
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        # --- 3D viewer ---
-        with st.expander("🧪 View Molecular Geometry (Before vs After)", expanded=True):
-            view_option = st.radio(
-                "Select structure to view:",
-                ["Before Optimization", "After Optimization"],
-                horizontal=True
-            )
-            sdf_data = Chem.MolToMolBlock(mol if view_option == "Before Optimization" else prev["optimized_mol"])
+        # --- 3D Viewer ---
+        with st.expander("🧪 View Molecular Geometry (Before vs After Optimization)", expanded=True):
+            view_option = st.radio("Select structure to view:", ["Before Optimization", "After Optimization"], horizontal=True)
+            xyz_to_show = prev["initial_xyz"] if view_option == "Before Optimization" else prev["optimized_xyz"]
+
             view = py3Dmol.view(width=550, height=420)
-            view.addModel(sdf_data, "sdf")
-            view.setStyle({"stick": {"radius": 0.15}})
+            view.addModel(xyz_to_show, "xyz")
+            view.setStyle({'stick': {}})
             view.setBackgroundColor("white")
             view.zoomTo()
             st.components.v1.html(view._make_html(), height=420)
@@ -709,13 +609,14 @@ def quantum_calculations_view(formula: str) -> None:
         with dl2:
             st.download_button("⬇️ After Optimization", prev["optimized_xyz"], file_name="after_optimization.xyz")
 
-        # --- Bond lengths ---
+        # --- Bond lengths (unique pairs) ---
         with st.expander("📏 Bond Lengths (After Optimization)", expanded=False):
             seen = set()
             opt_mol = prev["optimized_mol"]
             coords = prev["new_positions"]
             for bond in opt_mol.GetBonds():
-                i, j = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
+                i = bond.GetBeginAtomIdx()
+                j = bond.GetEndAtomIdx()
                 pair = tuple(sorted((i, j)))
                 if pair in seen:
                     continue
@@ -725,213 +626,77 @@ def quantum_calculations_view(formula: str) -> None:
                 dist = np.linalg.norm(coords[i] - coords[j])
                 st.write(f"{ai}-{aj}: {dist:.3f} Å")
 
-# =============================================================================
-# Chem Q&A Bot (cached)
-# =============================================================================
-@st.cache_data(show_spinner=False)
-def ask_chemistry_bot(query: str) -> str:
-    """
-    Recognize 'formula of X' / 'properties of X' and fetch quick data from PubChem.
-    Cached to reduce API traffic.
-    """
-    m_prop = re.search(r"properties of ([\w\s\-]+)", query, re.I)
-    m_form = re.search(r"formula of ([\w\s\-]+)", query, re.I)
-    name = m_prop.group(1).strip() if m_prop else m_form.group(1).strip() if m_form else None
-
-    if name:
-        try:
-            comps = pcp.get_compounds(name, "name")
-            if not comps:
-                return f"❌ I couldn’t find anything for “{name}” in PubChem."
-            c = comps[0]
-            formula = c.molecular_formula or "Unknown"
-            mw = getattr(c, "molecular_weight", None)
-            try:
-                mw_val = float(mw)
-                mw_str = f"{mw_val:.2f} g/mol"
-            except (ValueError, TypeError):
-                mw_str = "Unknown"
-
-            if m_form:
-                return f"The chemical formula for **{name.title()}** is **{formula}**."
-
-            parts = [
-                f"**Compound:** {name.title()}",
-                f"Formula: {formula}",
-                f"Molecular Weight: {mw_str}",
-            ]
-            if c.iupac_name:
-                parts.append(f"IUPAC: {c.iupac_name}")
-            if c.synonyms:
-                parts.append(f"Synonyms: {', '.join(c.synonyms[:3])}")
-            return " • ".join(parts)
-        except Exception as e:
-            return f"❌ PubChem lookup failed: {e}"
-
-    return (
-        "🤖 I couldn't parse a compound name. Try:\n"
-        "- 'formula of sulfuric acid'\n"
-        "- 'properties of glucose'"
-    )
-
-# =============================================================================
-# Chemistry Bot Voice/Text Sidebar
-# =============================================================================
-
+#voice assistant
 def chemistry_voice_assistant():
-    """Sidebar voice/text gateway to ask_chemistry_bot()."""
     st.markdown("### 🤖 Ask Chemistry Bot")
-    st.caption("Try saying: 'Formula of sulfuric acid' or 'Properties of glucose'.")
-
-    # Toggle between voice and text mode
-    voice_input_enabled = st.checkbox("🎙️ Voice Mode", value=False, key="use_voice_toggle_sidebar")
+    voice_input_enabled = st.toggle("🎙️ Use voice", value=False, key="use_voice_toggle_sidebar")
     if voice_input_enabled:
-        # --- Option A: Live Mic Recording ---
-        if st.button("🎤 Record Voice Question", key="record_btn_sidebar"):
-            try:
-                recognizer = sr.Recognizer()
-                with sr.Microphone() as source:
-                    with st.spinner("🎧 Listening..."):
-                        audio = recognizer.listen(source, timeout=5)
-
-                user_query = recognizer.recognize_google(audio)
-                st.success(f"💬 You asked: `{user_query}`")
-
-                answer = ask_chemistry_bot(user_query)
-                st.markdown(f"**🧠 Assistant:** {answer}")
-                speak_text(answer, voice_type="male")
-
-            except sr.WaitTimeoutError:
-                st.warning("⚠️ Listening timed out. Try again.")
-            except sr.UnknownValueError:
-                st.error("❌ Sorry, I couldn't understand. Please try speaking clearly.")
-            except Exception as e:
-                st.error(f"🎙️ Microphone error: {e}")
-
-        # --- Option B: Upload Audio File ---
-        audio_file = st.file_uploader("📂 Or upload a recorded question", type=["wav", "mp3", "m4a"])
-        if audio_file:
+        if st.button("🎤 Record Question", key="record_btn_sidebar"):
             recognizer = sr.Recognizer()
-            with sr.AudioFile(audio_file) as source:
-                audio = recognizer.record(source)
-            try:
-                user_query = recognizer.recognize_google(audio)
-                st.success(f"💬 You asked: `{user_query}`")
-                answer = ask_chemistry_bot(user_query)
-                st.markdown(f"**🧠 Assistant:** {answer}")
-                speak_text(answer, voice_type="male")
-            except Exception as e:
-                st.error(f"Audio recognition failed: {e}")
-
+            with sr.Microphone() as source:
+                with st.spinner("Listening..."):
+                    audio = recognizer.listen(source, timeout=5)
+                    try:
+                        user_query = recognizer.recognize_google(audio)
+                        st.markdown(f"💬 You asked: `{user_query}`")
+                        answer = ask_chemistry_bot(user_query)
+                        st.markdown(f"**🧠 Assistant:** {answer}")
+                        speak(answer)
+                    except Exception as e:
+                        st.error(f"❌ Could not recognize speech: {e}")
     else:
-        # --- Fallback: Text Input ---
-        user_query = st.text_input("⌨️ Type your chemistry question:", key="text_input_sidebar")
+        user_query = st.text_input("Type your chemistry question:", key="text_input_sidebar")
         if user_query:
             st.markdown(f"💬 You asked: `{user_query}`")
             answer = ask_chemistry_bot(user_query)
             st.markdown(f"**🧠 Assistant:** {answer}")
-            speak_text(answer, voice_type="male")
+            speak(answer)
 
-
-from typing import Optional, Tuple
-from functools import lru_cache
-
-# Make sure CHEMICAL_DATABASE, get_pubchem_compounds, and VOICE_ENABLED / ASE_ENABLED are already defined
-
-@st.cache_data
-def cached_pubchem(formula: str):
-    """Cache PubChem fetches to speed up repeated queries."""
-    return get_pubchem_compounds(formula)
-
-def sidebar_controls() -> Tuple[str, str, str, Optional[str], Optional[str]]:
-    """Create optimized sidebar controls for Molecular Explorer Pro."""
+def sidebar_controls() -> tuple:
+    """Create simplified sidebar controls"""
     with st.sidebar:
-        # -----------------------------
-        # About section
-        # -----------------------------
         st.markdown("""
         <div style="background:#f0f2f6; padding:1rem; border-radius:8px;">
             <h3>🚀 About</h3>
-            <p><strong>Molecular Explorer Pro</strong></p>
-            <p>Developed by Aqsa Ijaz</p>
-            <p>Interactive chemistry visualization & analysis</p>
-            <p><em>Version 5.6</em></p>
+            <p>This application was developed by Aqsa Ijaz to provide interactive chemistry visualization and analysis tools.</p>
+            <p>Version 5.6</p>
         </div>
         """, unsafe_allow_html=True)
-
-        st.markdown("---")
-
-        # -----------------------------
-        # Main controls
-        # -----------------------------
+        
         st.title("⚗️ Controls")
+        elements = [
+            "H", "He", "Li", "Be", "B", "C", "N", "O", "F", "Ne",
+            "Na", "Mg", "Al", "Si", "P", "S", "Cl", "Ar", "K", "Ca"
+        ]
+        selected_elements = st.multiselect(
+            "🧩 Build with Elements:", 
+            options=elements, 
+            help="Select elements to help you build a compound manually."
+        )
+        if selected_elements:
+            st.info(f"Selected elements: {', '.join(selected_elements)}")
 
         view_mode = st.radio(
             "Analysis Mode:",
-            [
-                "🔍 Quick Analysis",
-                "📊 Detailed Report",
-                "🔄 3D Explorer",
-                "🔬 Quantum Calc"
-            ],
+            ["🔍 Quick Analysis", "📊 Detailed Report", "🔄 3D Explorer", "🔬 Quantum Calc"],
             index=0
         )
-
         st.markdown("---")
-
-        # -----------------------------
-        # Optional features
-        # -----------------------------
-        st.markdown("### 🧠 Optional Features")
-
-        # Voice assistant toggle
-        voice_toggle = st.checkbox("🎙️ Enable voice assistant (local only)", value=False)
-        st.session_state["voice_allowed"] = voice_toggle and VOICE_ENABLED
-
-        # ASE toggle
-        ase_toggle = st.checkbox("⚛️ Enable geometry optimization (ASE)", value=False)
-        st.session_state["ase_allowed"] = ase_toggle and ASE_ENABLED
-
-        st.markdown("---")
-
-        # -----------------------------
-        # Compound selection
-        # -----------------------------
-        st.markdown("### 🧪 Select Compound")
-        query = st.text_input("Search compound (local search, PubChem optional):", "")
-
-        # Local database matches
-        local_matches = [
-            name for name in CHEMICAL_DATABASE.keys()
-            if query.lower() in name.lower() or query.lower() in CHEMICAL_DATABASE[name].lower()
-        ] or list(CHEMICAL_DATABASE.keys())  # fallback to all
-
-        compound = st.selectbox("Choose from local matches:", local_matches, index=0)
+        chemistry_voice_assistant()
+        compound = st.selectbox(
+            "Select Compound", 
+            sorted(CHEMICAL_DATABASE.keys()),
+            index=0
+        )
+        
         formula = CHEMICAL_DATABASE[compound]
-
-        # Optional PubChem fetch (on-demand)
-        if query.strip() and st.button("Fetch PubChem suggestions"):
-            pubchem_results = cached_pubchem(query)
-            if pubchem_results:
-                st.markdown("**PubChem suggestions:**")
-                for c in pubchem_results[:5]:  # top 5 suggestions
-                    st.write(f"{c.iupac_name or 'Unknown'} ({c.molecular_formula})")
-
-        # -----------------------------
-        # 3D Explorer options
-        # -----------------------------
         render_style = None
         bg_color = None
+        
         if view_mode == "🔄 3D Explorer":
-            render_style = st.selectbox(
-                "🧬 Render Style",
-                ["Stick", "Sphere", "Cartoon", "Surface"]
-            )
-            bg_color = st.color_picker(
-                "🎨 Background Color",
-                "#FFFFFF"
-            )
-
+            style = st.selectbox("🧬 Render Style", ["Stick", "Sphere", "Cartoon", "Surface"])
+            bg_color = st.color_picker("Background Color", "#FFFFFF")
+            
         return view_mode, compound, formula, render_style, bg_color
     
 
@@ -989,6 +754,16 @@ def ask_chemistry_bot(query: str) -> str:
 
     return "🤖 I couldn't find a compound name in your question. Try asking like:\n- 'formula of sulfuric acid'\n- 'properties of glucose'"
 
+# Initialize voice engine once at the top
+# Instead of defining 'speak()' twice, define once:
+engine = pyttsx3.init()
+def speak(text):
+    try:
+        if not engine._inLoop:
+            engine.say(text)
+            engine.runAndWait()
+    except RuntimeError:
+        pass
 #    """Main application function"""
 def main():
     st.markdown("""
